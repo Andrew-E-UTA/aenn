@@ -1,4 +1,5 @@
 TODO:
+-make real README
 - add relu options for activation functions
   - leaky
   - relu6 or reluX
