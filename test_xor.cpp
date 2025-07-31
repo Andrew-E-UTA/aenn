@@ -8,13 +8,14 @@ int main()
 {
 
     srand(101);
-    //Forward Declare Activation structs for my type
-    ActivationFunction<float> sigf = {sigmoidf, dsigmoidf};
-    // ActivationFunction<float> relf = {RelUf, dRelUf};
 
     //Construct the Model Description
     const std::vector<size_t> layerDesc = {2, 3, 3, 2};
-    std::vector<ActivationFunction<float>> layerActivations = {sigf, sigf, sigf};
+    std::vector<ActiVationType> layerActivations = {
+        ActiVationType::Sigmoid,
+        ActiVationType::Sigmoid,
+        ActiVationType::Sigmoid,
+    };
 
     //Create Model from the Layer sizes and activations
     Model<float> m(layerDesc, layerActivations);
@@ -38,7 +39,7 @@ int main()
     std::cout << "<<========================>>" << std::endl;
     const Tensor<float>& trainData = data.col(0, 2);
     const Tensor<float>& trainLabels = data.col(2, 2);
-    m.train(trainData, trainLabels, 100000, 1, false);
+    m.train(trainData, trainLabels, 10000, 1, true);
     std::cout << "Done!\n" << std::endl;
     
     for(size_t nDataPoint = 0; nDataPoint < 4; ++nDataPoint) {

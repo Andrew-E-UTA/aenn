@@ -136,13 +136,15 @@ public:
 
     Tensor& copy(Tensor& src){
         assert( (src.rows * src.cols) == (rows * cols) );
-        m_data = src.m_data;
+        for(size_t i = 0; i < rows * cols; ++i) 
+            m_data.at(i) = src.data->at(i);
         return *this;
     }
 
     Tensor& copy(std::vector<T>& data){
         assert( (data.size()) == (rows * cols) );
-        m_data = data;
+        for(size_t i = 0; i < rows * cols; ++i) 
+            m_data.at(i) = data.at(i);
         return *this;
     }
 

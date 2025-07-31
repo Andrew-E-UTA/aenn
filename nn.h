@@ -1,27 +1,82 @@
 #pragma once
 
+//===================================================================
+//DEPENDANCIES
+//===================================================================
 #include <vector>
 #include <cmath>
 #include <cinttypes>
+#include <fstream>
 #include "tensor.h"
 
+
+//===================================================================
+//INTERNAL HELPER FUNCTIONS
+//===================================================================
+void writeWord(std::ofstream& ofs, uint32_t hex) {
+    ofs.write((const char*)&hex, 4);
+}
+
+//===================================================================
+//SUPPORTED ACTIVATION FUNCTIONS
+//===================================================================
 template <typename T>
 using func = T(T);
 
-float sigmoidf(float x) {
-    return 1 / (1 + expf(-1 * x));
+template <typename T>
+T sigmoid(T x) {
+    return 1 / (1 + expf(-1 * (float)x));
 }
 
-float dsigmoidf(float x) {
-    return  sigmoidf(x) * (1 - sigmoidf(x));
+template <typename T>
+T dsigmoid(T x) {
+    return  sigmoid(x) * (1 - sigmoid(x));
 }
 
-float RelUf(float x) {
+template <typename T>
+T relu(T x) {
     return (x > 0)? x : 0;
 }
 
-float dRelUf(float x) {
+template <typename T>
+T drelu(T x) {
     return (x > 0)? 1: 0;
+}
+
+template <typename T>
+T linear(T x) {
+    return x;
+}
+
+template <typename T>
+T dlinear(T x) {
+    return (T) 1 + (x * (T)0);
+}
+
+enum class ActiVationType {
+    Linear  = 0x0000,
+    Sigmoid = 0x0001,
+    ReLu    = 0x0002,
+};
+
+template <typename T>
+func<T>* getActivation(ActiVationType type) {
+    switch(type) {
+        case ActiVationType::Linear     : return linear;
+        case ActiVationType::Sigmoid    : return sigmoid;
+        case ActiVationType::ReLu       : return relu;
+        default: return nullptr;
+    }
+}
+
+template <typename T>
+func<T>* getActivationDerivative(ActiVationType type) {
+    switch(type) {
+        case ActiVationType::Linear     : return dlinear;
+        case ActiVationType::Sigmoid    : return dsigmoid;
+        case ActiVationType::ReLu       : return drelu;
+        default: return nullptr;
+    }
 }
 
 template <typename T>
@@ -65,31 +120,16 @@ Tensor<T> softMax(const Tensor<T>& results) {
     return normalized;
 }
 
-template <typename T>
-T avg(const Tensor<T>& input) {
-    size_t nRows = input.dim()[0];
-    size_t nCols = input.dim()[1];
-    T sum = 0;
-    for(size_t r = 0; r < nRows; ++r) {
-        for(size_t c = 0; c < nCols; ++c) {
-            sum += input.at(r, c);
-        }
-    }
-    sum /= ((T) nRows * nCols);
-    return sum;
-}
-
-
-template <typename T>
-struct ActivationFunction {
-   func<T>* function;
-   func<T>* derivative;
-};
-
+//===================================================================
+//MAIN NEURAL NETWORK CLASS
+//===================================================================
 template <typename T>
 class Model {
 public:
-    Model(const std::vector<size_t>& desc, const std::vector<ActivationFunction<T>>& layerActivations){
+    //=============================
+    // CONSTRUCTORS
+    //=============================
+    Model(const std::vector<size_t>& desc, const std::vector<ActiVationType>& layerActivations){
         assert((desc.size() - 1) == layerActivations.size());
 
         size_t nLayerCount = desc.size();   //Layers + 1 (input)
@@ -119,6 +159,9 @@ public:
 
     ~Model() {}
 
+    //=============================
+    // PUBLIC API
+    //=============================
     void print(const char modelName[] = "Model") const {
         size_t nLayerCount = bs.size();
         char name[20];
@@ -135,8 +178,29 @@ public:
     }
 
     /*
-        First Word = 0xDEADBEEF //(denotes my nn model savefile)
-        Second Word = number of layers (N)
+        Word 1 = 0xDEADBEEF //(denotes my nn model savefile)
+        Word 2 = number of layers (N)
+        Word 3 = number of Bytes representing 1 value
+        Word 4 = Configuration:
+            Byte |  3   |   2   |   1   |   0   |
+                    |       |       |       Cost Function 
+                    |       |       Gradiant Type Used
+                    |       Reserved (0)
+                    Reserved (0)
+            Cost Types:
+                0 = MSE
+            Gradient Types:
+                0 = normal
+                1 = stochastic
+        Next N Words encode the activation functions per Layer:
+            Byte |  3   |   2   |   1   |   0   |
+                    |       |       |       Activation Type
+                    \       |       /
+                     Varies per type (TBD)
+            Activation Types: (Determined by enumeration)
+                0 = linear (none)
+                1 = sigmoid
+                2 = relu
         Rest is the Data:
             First N Tensors are the weights
             Last N  Tensors are the biases
@@ -146,29 +210,52 @@ public:
                     Next row*col words (row*col*4 bytes) are the hex representations of floats
     */
     void saveModelParams(const char sFileName[]) const {
-        std::ofstream outputFileStream(sFileName);
-        assert(outputFileStream != nullptr);
-
+        std::ofstream ofs(sFileName);
         size_t nLayerCount = wts.size();
-     
+        constexpr size_t nNumBytesPerType = sizeof(T);
+
+        //Intro
+        writeWord(ofs, 0xDEADBEEF);
+        writeWord(ofs, (uint32_t)nLayerCount);
+        writeWord(ofs, (uint32_t)nNumBytesPerType);
+
+        //Configuration
+        {
+            writeWord(ofs, 0);
+        }
+
+        //Activations
         for(size_t nLayer = 0; nLayer < nLayerCount; ++nLayer) {
-            Tensor<T>& t = wts.at(nLayer);
-            size_t nRowCount = t.dim()[0];
-            size_t nColCount = t.dim()[1];
-            for(size_t r = 0; r < nRowCount; ++r) {
-                for(size_t r = 0; r < nRowCount; ++r) {
+            writeWord(ofs, (uint8_t) activations.at(nLayer));
+        }
+
+        //WeightTensors 
+        for(size_t nLayer = 0; nLayer < nLayerCount; ++nLayer) {
+            const Tensor<T>& t = wts.at(nLayer);
+            size_t nRows = t.dim()[0];
+            size_t nCols = t.dim()[1];
+            writeWord(ofs, (uint32_t)nRows);
+            writeWord(ofs, (uint32_t)nCols);
+            for(size_t r = 0; r < nRows; ++r) {
+                for(size_t c = 0; c < nCols; ++c) {
                     T tVal = t.at(r, c);
-                    size_t nByteCount = sizeof(T);
-                    for(size_t nByte = 0; nByte < nByteCount; ++nByte) {
-                        uint8_t nByteVal = ((tVal && (0xFF << nByteCount*4)) >> (nByteCount * 4));
-                        outputFileStream.write(nByteVal);
-                    }
+                    ofs.write((char*)&tVal, nNumBytesPerType);
                 }
             }
         }
-
+        //BiasTensors 
         for(size_t nLayer = 0; nLayer < nLayerCount; ++nLayer) {
-            
+            const Tensor<T>& t = bs.at(nLayer);
+            size_t nRows = t.dim()[0];
+            size_t nCols = t.dim()[1];
+            writeWord(ofs, (uint32_t)nRows);
+            writeWord(ofs, (uint32_t)nCols);
+            for(size_t r = 0; r < nRows; ++r) {
+                for(size_t c = 0; c < nCols; ++c) {
+                    T tVal = t.at(r, c);
+                    ofs.write((char*)&tVal, nNumBytesPerType);
+                }
+            }
         }
     }
 
@@ -186,7 +273,7 @@ public:
             Tensor<T>& b = bs.at(nLayer);           
             const Tensor<T>& y = w.transpose() * x + b;
             zs.push_back(y);
-            acts.at(nLayer + 1) = activations.at(nLayer).function? y.apply(activations.at(nLayer).function): y;
+            acts.at(nLayer + 1) = y.apply(getActivation<T>(activations.at(nLayer)));
         }
         return getOutput();
     }
@@ -195,7 +282,7 @@ public:
     Tensor<T> cost(const Tensor<T>& input, const Tensor<T>& expected) {
             Tensor<T> outp = forward(input);    //Outputs Stored at final Activation Layer
             Tensor<T> cost = outp - expected;
-            return cost.squared();
+            return cost.squared() / ((T)2);
     }
 
     void train(const Tensor<T>& trainingData, const Tensor<T> labels, size_t epochs, float learnRate, bool seeCost = false) {
@@ -218,7 +305,7 @@ public:
             }
             totalLoss = totalLoss / (T)nTrainCount;
 
-            this->apply();
+            this->learn();
 
             if(seeCost) {
                 T avgCost = totalLoss.average();
@@ -228,6 +315,14 @@ public:
         }
     }
 
+private:
+    //=============================
+    // Internal API
+    //=============================
+    Tensor<T> dCost(const Tensor<T>& expected) {
+        return getOutput() - expected;   //Trust? Might not be correct
+    }
+
     void backward(const Tensor<T>& expected, T learnRate) {
         //Number of layers (excluding input)
         size_t nLayerCount = acts.size() - 1;
@@ -235,10 +330,8 @@ public:
         std::vector<Tensor<T>> deltas(nLayerCount);
         //calculate Delta for output Layer
         Tensor<T> d = dCost(expected);
-        ActivationFunction a = activations.at(nLayerCount - 1);
-        Tensor<T> z =  (a.derivative != nullptr) 
-                            ? zs.at(nLayerCount - 1).apply(a.derivative) 
-                            : zs.at(nLayerCount - 1).fill((T) 1);
+        func<T>* derivative = getActivationDerivative<T>(activations.at(nLayerCount - 1));
+        Tensor<T> z =  zs.at(nLayerCount - 1).apply(derivative);
         Tensor<T> layerDelta = hadamard(d, z);
         deltas.at(nLayerCount - 1) = layerDelta;
 
@@ -247,10 +340,8 @@ public:
             Tensor<T>& wNext = wts.at(nLayer + 1);
             Tensor<T>& deltaNext = deltas.at(nLayer + 1);
 
-            a = activations.at(nLayer);
-            Tensor<T> z = (a.derivative != nullptr) 
-                            ? zs.at(nLayer).apply(a.derivative) 
-                            : zs.at(nLayer).fill((T) 1);
+            derivative = getActivationDerivative<T>(activations.at(nLayer));
+            Tensor<T> z =zs.at(nLayer).apply(derivative);
 
             layerDelta = hadamard((wNext * deltaNext), z);
             deltas.at(nLayer) = layerDelta;
@@ -272,7 +363,7 @@ public:
         nCountPropagated += 1;
     }
 
-    void apply() {
+    void learn() {
         size_t nLayerCount = acts.size() - 1;
         for(size_t nLayer = 0; nLayer < nLayerCount; ++nLayer) {
             Tensor<T> bGrad = (bGrads.at(nLayer) / (T) nCountPropagated);
@@ -285,12 +376,6 @@ public:
         nCountPropagated = 0;
     }
 
-private:
-    
-    Tensor<T> dCost(const Tensor<T>& expected) {
-        return getOutput() - expected;   //Trust? Might not be correct
-    }
-
     //Returns RO reference to final activation layer (stores the result)
     const Tensor<T>& getOutput(void) const {
         return acts.back();
@@ -300,6 +385,9 @@ private:
         return *acts.begin();
     }
 
+    //=============================
+    // Debug Functions
+    //=============================
     void dumpGrads(const char modelName[] = "Model") {
         size_t nLayerCount = bs.size();
         char name[20];
@@ -346,7 +434,6 @@ private:
     std::vector<Tensor<T>> bGrads;      //Temporary Storage of Gradiants for the Biases
     std::vector<Tensor<T>> wts;         //Incoming Weights of eachLayer
     std::vector<Tensor<T>> wtGrads;     //Temporary Storage of Gradiants for the Weights
-    std::vector<ActivationFunction<T>>   activations;
+    std::vector<ActiVationType> activations;
     size_t nCountPropagated = 0;
-    
 };

@@ -7,8 +7,6 @@
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "thirdparty/stb_image_write.h"
 
-const ActivationFunction<float> sigf = {sigmoidf, dsigmoidf};
-
 #define READ_WORD(num, buf, idx)\
     num &= ~0xFFFFFFFF;\
     num |= (buf[idx++]<<24 & 0xFF000000);\
@@ -137,6 +135,7 @@ void makeTensorSet(size_t nSetCount, std::vector<std::vector<uint8_t>>& srcImage
 
 int main(void)
 {   
+
     srand(time(0));
 
     constexpr float fLearnRate = 1e-1;
@@ -155,7 +154,11 @@ int main(void)
             10 outputs
     */
     const std::vector<size_t> layerDesc = {784, 16, 16, 10};
-    std::vector<ActivationFunction<float>> layerActivations = {sigf, sigf, sigf};
+    std::vector<ActiVationType> layerActivations = {
+        ActiVationType::Sigmoid,
+        ActiVationType::Sigmoid,
+        ActiVationType::Sigmoid
+    };
 
     //Create Model from the Layer sizes and activations
     Model<float> m(layerDesc, layerActivations);
@@ -211,6 +214,8 @@ int main(void)
     }
     float accuracy = (float)correct / (float)nTestCount;
     std::cout << "Accuracy = " << std::setw(10) << std::fixed << std::setprecision(3) << accuracy << std::endl;
+
+    m.saveModelParams("TrainedModel.nn");
 
     return 0;
 }
